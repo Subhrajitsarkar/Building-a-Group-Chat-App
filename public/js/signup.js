@@ -12,6 +12,7 @@ async function signup(event) {
 
         if (response.status === 201) {
             alert("Successfuly signed up")
+            window.location.href = '/login'
         }
     } catch (err) {
         if (err.response && err.response.status === 409)
