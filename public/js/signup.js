@@ -11,9 +11,12 @@ async function signup(event) {
         let response = await axios.post('http://localhost:3000/user/signup', obj)
 
         if (response.status === 201) {
-            window.location.href = '/login'
+            alert("Successfuly signed up")
         }
     } catch (err) {
-        document.body.innerHTML += `<div>${err}</div>`
+        if (err.response && err.response.status === 409)
+            alert('User already exists, Please logged in')
+        else
+            document.body.innerHTML += `<div>${err.message}</div>`
     }
 }

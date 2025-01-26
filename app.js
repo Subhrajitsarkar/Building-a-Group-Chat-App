@@ -2,7 +2,7 @@ let express = require('express')
 let app = express()
 let bosyParser = require('body-parser')
 app.use(bosyParser.urlencoded({ extended: false }))
-let path = require(path)
+let path = require('path')
 let bcrypt = require('bcrypt')
 let jwt = require('jsonwebtoken')
 let cors = require('cors')
@@ -22,6 +22,10 @@ app.post('/user/signup', async (req, res) => {
 
         if (!name || !email || !number || !password)
             throw new Error('all fields are required')
+
+        let existingUser = await User.findOne({ Where: { email } })
+        if (existingUser)
+            return res.status(409).json({ message: 'User already exists' })
 
         let hashedPassword = bcrypt.hash(password, 10)
         let response = await User.create({ name, email, number, password: hashedPassword })
