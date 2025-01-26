@@ -5,10 +5,12 @@ app.use(bodyParser.urlencoded({ extended: false }))
 app.use(express.json())
 let path = require('path')
 let bcrypt = require('bcrypt')
+let jwt = require('jsonwebtoken')
 let cors = require('cors')
 app.use(cors())
 let User = require('./models/userModel')
 let sequelize = require('./utils/database')
+require('dotenv').config()
 
 app.use(express.static(path.join(__dirname, 'public')))
 
@@ -37,6 +39,30 @@ app.post('/user/signup', async (req, res) => {
         console.log(err);
 
         res.status(500).json({ message: 'error in signup backend' })
+    }
+})
+
+async function generateAccessToken(id, name) {
+    return jwt.sign({ userId: id, name }, process.env.JWT_SECRET)
+}
+exports.generateAccessToken = generateAccessToken
+
+app.post('/user/login', async (req, res) => {
+    try {
+        let { email, password } = req.body
+        if (!email || !password)
+            throw new Error('All fields are required')
+        const user = await User.findOne({ where: { email } })
+        if (!user)
+            return res.status(404).json({ message: 'User not found' })
+        let isPasswordValid = await bcrypt.compare(password, user.password)
+        const token = await generateAccessToken(user.id, user.name);
+        if (isPasswordValid)
+            res.status(200).json({ message: 'Welcome to chat app', token: token })
+        else
+            return res.status(401).json({ message: 'Invalid credentials' });
+    } catch (err) {
+
     }
 })
 
