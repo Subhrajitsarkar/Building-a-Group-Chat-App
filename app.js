@@ -10,6 +10,7 @@ const { authenticate, generateAccessToken } = require('./middleware/auth');
 const User = require('./models/userModel');
 const Chat = require('./models/chatModel');
 const sequelize = require('./utils/database');
+const Sequelize = require('sequelize');
 require('dotenv').config();
 
 const app = express();
@@ -39,9 +40,6 @@ io.use(async (socket, next) => {
         const token = socket.handshake.auth.token;
         if (!token) return next(new Error('Authentication required'));
 
-        // Add logging
-        console.log('Received token:', token);
-
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const user = await User.findByPk(decoded.userId);
         if (!user) return next(new Error('User not found'));
@@ -49,7 +47,7 @@ io.use(async (socket, next) => {
         socket.user = user;
         next();
     } catch (err) {
-        console.error('Socket auth error:', err.message); // Log the actual error
+        console.error('Socket auth error:', err.message);
         next(new Error('Invalid token'));
     }
 });
@@ -134,29 +132,40 @@ app.post('/chat/send', authenticate, async (req, res) => {
             userId: req.user.id
         });
 
+        // In POST /chat/send endpoint
         const chatWithUser = await Chat.findByPk(chat.id, {
-            include: [User] // Ensure this correctly includes the User model
+            include: [User],
+            attributes: ['id', 'message', 'createdAt'] // ➕ Explicitly select fields
         });
-        console.log('Chat With User:', chatWithUser); // Log for debugging        
 
-        // Broadcast new message to all clients
-        io.emit('new-message', {
+        // Format the response to flatten user data
+        const formattedMessage = {
+            id: chatWithUser.id,
             message: chatWithUser.message,
-            user: chatWithUser.user ? chatWithUser.user.name : 'Unknown', // lowercase 'user'
+            user: chatWithUser.user.name, // ✅ Flatten to a string
             createdAt: chatWithUser.createdAt
-        });
+        };
 
-        res.status(200).json(chatWithUser);
+        // Broadcast and respond with formatted data
+        io.emit('new-message', formattedMessage);
+        res.status(200).json(formattedMessage); // ➕ Use formatted data
     } catch (err) {
-        console.error('Error in /chat/send:', err); // Log detailed error
+        console.error('Error in /chat/send:', err);
         res.status(500).json({ message: 'Error sending message' });
     }
 });
 
 app.get('/chat/messages', authenticate, async (req, res) => {
     try {
+        const lastId = parseInt(req.query.lastId) || 0;
+        if (isNaN(lastId)) { // Validate lastId
+            return res.status(400).json({ message: 'Invalid lastId parameter' });
+        }
+
         const messages = await Chat.findAll({
-            include: [User] // Ensure this correctly includes the User model
+            where: { id: { [Sequelize.Op.gt]: lastId } },
+            include: [User],
+            order: [['id', 'ASC']]
         });
         res.status(200).json(messages);
     } catch (err) {
