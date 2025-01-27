@@ -62,10 +62,10 @@ async function sendChat(event) {
     }
 }
 
-// Polling the API every second to fetch new messages
-// setInterval(() => {
-//     fetchMessages();
-// }, 1000);
+//Polling the API every second to fetch new messages
+setInterval(() => {
+    fetchMessages();
+}, 1000);
 
 // Initial load
 window.onload = fetchMessages;
