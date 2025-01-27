@@ -1,23 +1,67 @@
 const express = require('express');
-const app = express();
+const http = require('http');
+const socketIo = require('socket.io');
 const bodyParser = require('body-parser');
 const path = require('path');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const { authenticate, generateAccessToken } = require('./middleware/auth');
 const User = require('./models/userModel');
 const Chat = require('./models/chatModel');
 const sequelize = require('./utils/database');
 require('dotenv').config();
 
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+    cors: {
+        origin: "http://localhost:3000",
+        methods: ["GET", "POST"],
+        allowedHeaders: ["Authorization"],
+        credentials: true
+    }
+});
+
+// Middleware
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Set up associations
-User.hasMany(Chat);
-Chat.belongsTo(User);
+// Database associations
+User.hasMany(Chat, { foreignKey: 'userId' });
+Chat.belongsTo(User, { foreignKey: 'userId' });
+
+// Socket.IO authentication
+io.use(async (socket, next) => {
+    try {
+        const token = socket.handshake.auth.token;
+        if (!token) return next(new Error('Authentication required'));
+
+        // Add logging
+        console.log('Received token:', token);
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findByPk(decoded.userId);
+        if (!user) return next(new Error('User not found'));
+
+        socket.user = user;
+        next();
+    } catch (err) {
+        console.error('Socket auth error:', err.message); // Log the actual error
+        next(new Error('Invalid token'));
+    }
+});
+
+// Socket.IO connection handler
+io.on('connection', (socket) => {
+    console.log(`User connected: ${socket.user.name}`);
+
+    socket.on('disconnect', () => {
+        console.log(`User disconnected: ${socket.user.name}`);
+    });
+});
 
 // Routes
 app.get('/', (req, res) => {
@@ -32,6 +76,7 @@ app.get('/chat', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'views', 'chat.html'));
 });
 
+// User routes
 app.post('/user/signup', async (req, res) => {
     try {
         const { name, email, number, password } = req.body;
@@ -46,7 +91,7 @@ app.post('/user/signup', async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
         const user = await User.create({ name, email, number, password: hashedPassword });
-        res.status(201).json({ user });
+        res.status(201).json({ message: 'Successfully signed up', user });
     } catch (err) {
         res.status(500).json({ message: 'Error in signup' });
     }
@@ -76,7 +121,7 @@ app.post('/user/login', async (req, res) => {
     }
 });
 
-// Chat endpoints
+// Chat routes
 app.post('/chat/send', authenticate, async (req, res) => {
     try {
         const { message } = req.body;
@@ -90,11 +135,20 @@ app.post('/chat/send', authenticate, async (req, res) => {
         });
 
         const chatWithUser = await Chat.findByPk(chat.id, {
-            include: [User]
+            include: [User] // Ensure this correctly includes the User model
+        });
+        console.log('Chat With User:', chatWithUser); // Log for debugging        
+
+        // Broadcast new message to all clients
+        io.emit('new-message', {
+            message: chatWithUser.message,
+            user: chatWithUser.user ? chatWithUser.user.name : 'Unknown', // lowercase 'user'
+            createdAt: chatWithUser.createdAt
         });
 
         res.status(200).json(chatWithUser);
     } catch (err) {
+        console.error('Error in /chat/send:', err); // Log detailed error
         res.status(500).json({ message: 'Error sending message' });
     }
 });
@@ -102,11 +156,11 @@ app.post('/chat/send', authenticate, async (req, res) => {
 app.get('/chat/messages', authenticate, async (req, res) => {
     try {
         const messages = await Chat.findAll({
-            include: [User],
-            order: [['createdAt', 'ASC']]
+            include: [User] // Ensure this correctly includes the User model
         });
         res.status(200).json(messages);
     } catch (err) {
+        console.error('Error fetching messages:', err);
         res.status(500).json({ message: 'Error fetching messages' });
     }
 });
@@ -114,6 +168,6 @@ app.get('/chat/messages', authenticate, async (req, res) => {
 // Database sync and server start
 sequelize.sync()
     .then(() => {
-        app.listen(3000, () => console.log('Server running on port 3000'));
+        server.listen(3000, () => console.log('Server running on port 3000'));
     })
     .catch(err => console.error('Database sync error:', err));

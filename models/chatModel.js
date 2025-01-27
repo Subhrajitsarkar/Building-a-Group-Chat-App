@@ -1,5 +1,6 @@
 const Sequelize = require('sequelize');
 const sequelize = require('../utils/database');
+const User = require('../models/userModel');
 
 const Chat = sequelize.define('chat', {
     id: {
@@ -13,8 +14,18 @@ const Chat = sequelize.define('chat', {
     },
     userId: {
         type: Sequelize.INTEGER,
-        allowNull: false
+        allowNull: false,
+        references: {
+            model: User, // Reference User model
+            key: 'id'
+        }
     }
+}, {
+    timestamps: true,
+    underscored: true
 });
+
+// Define the association
+Chat.belongsTo(User, { foreignKey: 'userId' });
 
 module.exports = Chat;
