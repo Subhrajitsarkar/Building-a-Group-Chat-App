@@ -6,12 +6,15 @@ const path = require('path');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+require('dotenv').config();
+
 const { authenticate, generateAccessToken } = require('./middleware/auth');
 const User = require('./models/userModel');
 const Chat = require('./models/chatModel');
+const Group = require('./models/groupModel');
+const GroupMember = require('./models/groupMemberModel');
+const GroupChat = require('./models/groupChatModel');
 const sequelize = require('./utils/database');
-const Sequelize = require('sequelize');
-require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
@@ -34,30 +37,37 @@ app.use(express.static(path.join(__dirname, 'public')));
 User.hasMany(Chat, { foreignKey: 'userId' });
 Chat.belongsTo(User, { foreignKey: 'userId' });
 
-// Socket.IO authentication
-io.use(async (socket, next) => {
-    try {
-        const token = socket.handshake.auth.token;
-        if (!token) return next(new Error('Authentication required'));
+User.belongsToMany(Group, { through: GroupMember, foreignKey: 'userId' });
+Group.belongsToMany(User, { through: GroupMember, foreignKey: 'groupId' });
+Group.hasMany(GroupChat, { foreignKey: 'groupId' });
+GroupChat.belongsTo(Group, { foreignKey: 'groupId' });
+GroupChat.belongsTo(User, { foreignKey: 'userId' });
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findByPk(decoded.userId);
-        if (!user) return next(new Error('User not found'));
-
-        socket.user = user;
-        next();
-    } catch (err) {
-        console.error('Socket auth error:', err.message);
-        next(new Error('Invalid token'));
+// Middleware to authenticate socket connections
+io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    if (token) {
+        jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+            if (err) return next(new Error('Authentication error'));
+            socket.user = decoded;
+            next();
+        });
+    } else {
+        next(new Error('Authentication error'));
     }
 });
 
-// Socket.IO connection handler
 io.on('connection', (socket) => {
-    console.log(`User connected: ${socket.user.name}`);
+    console.log('New client connected:', socket.id);
+
+    socket.on('join-group', (groupId) => {
+        if (!groupId) return;
+        socket.join(groupId); // Join the group room
+        console.log(`User ${socket.id} joined group ${groupId}`);
+    });
 
     socket.on('disconnect', () => {
-        console.log(`User disconnected: ${socket.user.name}`);
+        console.log('Client disconnected:', socket.id);
     });
 });
 
@@ -74,7 +84,7 @@ app.get('/chat', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'views', 'chat.html'));
 });
 
-// User routes
+// User signup
 app.post('/user/signup', async (req, res) => {
     try {
         const { name, email, number, password } = req.body;
@@ -95,6 +105,7 @@ app.post('/user/signup', async (req, res) => {
     }
 });
 
+// User login
 app.post('/user/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -119,60 +130,132 @@ app.post('/user/login', async (req, res) => {
     }
 });
 
-// Chat routes
-app.post('/chat/send', authenticate, async (req, res) => {
+// Create a new group
+app.post('/group', authenticate, async (req, res) => {
     try {
-        const { message } = req.body;
-        if (!message) {
-            return res.status(400).json({ message: 'Message cannot be empty' });
-        }
+        const { name } = req.body;
+        if (!name) return res.status(400).json({ message: 'Group name is required' });
 
-        const chat = await Chat.create({
-            message,
-            userId: req.user.id
-        });
-
-        // In POST /chat/send endpoint
-        const chatWithUser = await Chat.findByPk(chat.id, {
-            include: [User],
-            attributes: ['id', 'message', 'createdAt'] // ➕ Explicitly select fields
-        });
-
-        // Format the response to flatten user data
-        const formattedMessage = {
-            id: chatWithUser.id,
-            message: chatWithUser.message,
-            user: chatWithUser.user.name, // ✅ Flatten to a string
-            createdAt: chatWithUser.createdAt
-        };
-
-        // Broadcast and respond with formatted data
-        io.emit('new-message', formattedMessage);
-        res.status(200).json(formattedMessage); // ➕ Use formatted data
+        const group = await Group.create({ name, createdBy: req.user.id });
+        await GroupMember.create({ userId: req.user.id, groupId: group.id }); // Add creator as a member
+        res.status(201).json({ message: 'Group created', group });
     } catch (err) {
-        console.error('Error in /chat/send:', err);
-        res.status(500).json({ message: 'Error sending message' });
+        console.error('Error creating group:', err);
+        res.status(500).json({ message: 'Error creating group' });
     }
 });
 
-app.get('/chat/messages', authenticate, async (req, res) => {
+// Add user to a group
+app.post('/group/:groupId/add', authenticate, async (req, res) => {
     try {
-        const lastId = parseInt(req.query.lastId) || 0;
-        if (isNaN(lastId)) { // Validate lastId
-            return res.status(400).json({ message: 'Invalid lastId parameter' });
+        const { groupId } = req.params;
+        const { userId } = req.body;
+
+        const group = await Group.findByPk(groupId);
+        if (!group) return res.status(404).json({ message: 'Group not found' });
+
+        if (group.createdBy !== req.user.id) {
+            return res.status(403).json({ message: 'Only the group creator can add members' });
         }
 
-        const messages = await Chat.findAll({
-            where: { id: { [Sequelize.Op.gt]: lastId } },
-            include: [User],
-            order: [['id', 'ASC']]
+        await GroupMember.create({ userId, groupId });
+        res.status(200).json({ message: 'User added to group' });
+    } catch (err) {
+        console.error('Error adding user to group:', err);
+        res.status(500).json({ message: 'Error adding user to group' });
+    }
+});
+
+app.post('/group/:groupId/message', authenticate, async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { message } = req.body;
+        const userId = req.user.id;
+
+        if (!message) return res.status(400).json({ message: 'Message is required' });
+
+        // Save the message to the database
+        const newMessage = await GroupChat.create({
+            message,
+            groupId,
+            userId
         });
-        res.status(200).json(messages);
+
+        // Fetch the message along with the user details
+        const populatedMessage = await GroupChat.findOne({
+            where: { id: newMessage.id },
+            include: [{ model: User, attributes: ['name'] }]
+        });
+
+        // Broadcast to the group room
+        io.to(groupId).emit('new-group-message', {
+            id: populatedMessage.id,
+            message: populatedMessage.message,
+            user: populatedMessage.user.name,
+            createdAt: populatedMessage.createdAt,
+            groupId: populatedMessage.groupId
+        });
+
+        res.status(201).json(populatedMessage);
+    } catch (err) {
+        console.error('Error sending message:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Fetch groups for a user
+app.get('/groups', authenticate, async (req, res) => {
+    try {
+        const groups = await Group.findAll();
+        res.json(groups);
+    } catch (err) {
+        console.error('Error fetching groups:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Fetch messages for a group
+app.get('/group/:groupId/messages', authenticate, async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const messages = await GroupChat.findAll({
+            where: { groupId },
+            include: [{ model: User, attributes: ['name'] }],
+            order: [['createdAt', 'ASC']]
+        });
+        res.json(messages);
     } catch (err) {
         console.error('Error fetching messages:', err);
-        res.status(500).json({ message: 'Error fetching messages' });
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
+
+app.post('/chat/send', async (req, res) => {
+    try {
+        const { message, groupId } = req.body; // Expect groupId from the client
+
+        if (!message || !groupId) {
+            return res.status(400).json({ error: 'Message and groupId are required' });
+        }
+
+        // Save the message to the database
+        const newMessage = await saveMessageToDatabase({
+            message,
+            groupId,
+            userId: req.user.id, // Assuming you have user authentication middleware
+        });
+
+        // Broadcast the new message to clients in the same group
+        io.to(`group-${groupId}`).emit('new-group-message', newMessage);
+
+        // Respond with the saved message
+        res.status(201).json(newMessage);
+    } catch (err) {
+        console.error('Error sending message:', err.message);
+        res.status(500).json({ error: 'Failed to send message' });
+    }
+});
+
 
 // Database sync and server start
 sequelize.sync()

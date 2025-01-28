@@ -4,20 +4,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chat App</title>
+    <title>Group Chat App</title>
     <link rel="stylesheet" href="../css/chat.css">
 </head>
 
 <body>
-    <div class="chat-header">Chat App</div>
+    <div class="chat-header">Group Chat App</div>
+
+    <div class="group-selector">
+        <select id="group-select" onchange="fetchGroupMessages()">
+            <option value="">Select a Group</option>
+        </select>
+        <button onclick="createGroup()">Create Group</button>
+    </div>
+
     <div class="chat-container" id="messages"></div>
+
     <div class="chat-input">
         <input type="text" id="chat-input" placeholder="Type a message...">
         <button onclick="sendChat(event)">Send</button>
     </div>
+
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
-    <script src='../js/chat.js'></script>
+    <script src="../js/chat.js"></script>
 </body>
 
 </html>
