@@ -167,6 +167,56 @@ socket.on('new-group-message', (newMsg) => {
     }
 });
 
+// Search and add user to group
+async function searchAndAddUser() {
+    try {
+        const searchQuery = prompt('Enter name, email, or phone number:');
+        if (!searchQuery) return;
+
+        const response = await axios.get(`http://localhost:3000/users/search?query=${searchQuery}`);
+        const users = response.data;
+
+        if (users.length === 0) {
+            alert('No users found');
+            return;
+        }
+
+        const userId = prompt('Enter the ID of the user to add:');
+        if (!userId) return;
+
+        await axios.post(`http://localhost:3000/group/${selectedGroup}/add`, { userId });
+        alert('User added to group');
+    } catch (err) {
+        console.error('Error searching and adding user:', err);
+    }
+}
+
+// Make user admin
+async function makeUserAdmin() {
+    try {
+        const userId = prompt('Enter the ID of the user to make admin:');
+        if (!userId) return;
+
+        await axios.post(`http://localhost:3000/group/${selectedGroup}/makeAdmin`, { userId });
+        alert('User made admin');
+    } catch (err) {
+        console.error('Error making user admin:', err);
+    }
+}
+
+// Remove user from group
+async function removeUserFromGroup() {
+    try {
+        const userId = prompt('Enter the ID of the user to remove:');
+        if (!userId) return;
+
+        await axios.post(`http://localhost:3000/group/${selectedGroup}/remove`, { userId });
+        alert('User removed from group');
+    } catch (err) {
+        console.error('Error removing user from group:', err);
+    }
+}
+
 // Load groups and messages on initial load
 window.onload = async () => {
     await fetchGroups();

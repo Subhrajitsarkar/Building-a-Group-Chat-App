@@ -137,11 +137,75 @@ app.post('/group', authenticate, async (req, res) => {
         if (!name) return res.status(400).json({ message: 'Group name is required' });
 
         const group = await Group.create({ name, createdBy: req.user.id });
-        await GroupMember.create({ userId: req.user.id, groupId: group.id }); // Add creator as a member
+        await GroupMember.create({ userId: req.user.id, groupId: group.id, isAdmin: true }); // Add creator as an admin
         res.status(201).json({ message: 'Group created', group });
     } catch (err) {
         console.error('Error creating group:', err);
         res.status(500).json({ message: 'Error creating group' });
+    }
+});
+
+app.post('/group/:groupId/makeAdmin', authenticate, async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { userId } = req.body;
+
+        const group = await Group.findByPk(groupId);
+        if (!group) return res.status(404).json({ message: 'Group not found' });
+
+        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        if (!isAdmin) {
+            return res.status(403).json({ message: 'Only group admins can make other members admin' });
+        }
+
+        await GroupMember.update({ isAdmin: true }, { where: { groupId, userId } });
+        res.status(200).json({ message: 'User made admin' });
+    } catch (err) {
+        console.error('Error making user admin:', err);
+        res.status(500).json({ message: 'Error making user admin' });
+    }
+});
+
+app.post('/group/:groupId/remove', authenticate, async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { userId } = req.body;
+
+        const group = await Group.findByPk(groupId);
+        if (!group) return res.status(404).json({ message: 'Group not found' });
+
+        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        if (!isAdmin) {
+            return res.status(403).json({ message: 'Only group admins can remove members' });
+        }
+
+        await GroupMember.destroy({ where: { groupId, userId } });
+        res.status(200).json({ message: 'User removed from group' });
+    } catch (err) {
+        console.error('Error removing user from group:', err);
+        res.status(500).json({ message: 'Error removing user from group' });
+    }
+});
+
+app.get('/users/search', authenticate, async (req, res) => {
+    try {
+        const { query } = req.query;
+        if (!query) return res.status(400).json({ message: 'Search query is required' });
+
+        const users = await User.findAll({
+            where: {
+                [Sequelize.Op.or]: [
+                    { name: { [Sequelize.Op.like]: `%${query}%` } },
+                    { email: { [Sequelize.Op.like]: `%${query}%` } },
+                    { number: { [Sequelize.Op.like]: `%${query}%` } }
+                ]
+            }
+        });
+
+        res.json(users);
+    } catch (err) {
+        console.error('Error searching users:', err);
+        res.status(500).json({ message: 'Error searching users' });
     }
 });
 
@@ -154,8 +218,9 @@ app.post('/group/:groupId/add', authenticate, async (req, res) => {
         const group = await Group.findByPk(groupId);
         if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        if (group.createdBy !== req.user.id) {
-            return res.status(403).json({ message: 'Only the group creator can add members' });
+        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        if (!isAdmin) {
+            return res.status(403).json({ message: 'Only group admins can add members' });
         }
 
         await GroupMember.create({ userId, groupId });
@@ -258,7 +323,7 @@ app.post('/chat/send', async (req, res) => {
 
 
 // Database sync and server start
-sequelize.sync()
+sequelize.sync({ alter: true })
     .then(() => {
         server.listen(3000, () => console.log('Server running on port 3000'));
     })

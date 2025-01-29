@@ -25,6 +25,12 @@
         <button onclick="sendChat(event)">Send</button>
     </div>
 
+    <div class="group-actions">
+        <button onclick="searchAndAddUser()">Add User</button>
+        <button onclick="makeUserAdmin()">Make Admin</button>
+        <button onclick="removeUserFromGroup()">Remove User</button>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="../js/chat.js"></script>

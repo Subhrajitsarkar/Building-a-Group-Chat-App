@@ -22,6 +22,10 @@ const GroupMember = sequelize.define('groupMember', {
             model: Group,
             key: 'id'
         }
+    },
+    isAdmin: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false
     }
 }, {
     timestamps: true,
