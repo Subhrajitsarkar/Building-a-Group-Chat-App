@@ -13,6 +13,10 @@ const GroupChat = sequelize.define('groupChat', {
         type: Sequelize.TEXT,
         allowNull: false
     },
+    fileUrl: {
+        type: Sequelize.STRING,
+        allowNull: true,
+    },
     groupId: {
         type: Sequelize.INTEGER,
         references: {

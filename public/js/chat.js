@@ -75,7 +75,7 @@ async function fetchGroupMessages() {
         selectedGroupIsAdmin = selectedOption ? selectedOption.dataset.isAdmin === 'true' : false;
 
         // Join the group room
-        socket.emit('join-group', selectedGroup);
+        socket.emit('join-group', String(selectedGroup));
 
         // Fetch messages from the server
         const response = await axios.get(`http://localhost:3000/group/${selectedGroup}/messages`);
@@ -83,7 +83,8 @@ async function fetchGroupMessages() {
             id: msg.id,
             message: msg.message,
             user: msg.user ? msg.user.name : 'Unknown',
-            createdAt: msg.createdAt
+            createdAt: msg.createdAt,
+            fileUrl: msg.fileUrl // Include fileUrl if it exists
         }));
 
         chatMessages = newMessages;
@@ -94,55 +95,74 @@ async function fetchGroupMessages() {
     }
 }
 
+
 // Display chat messages
 function displayChat() {
     const messagesContainer = document.getElementById('messages');
     messagesContainer.innerHTML = '';
-    const currentUserId = localStorage.getItem('userId'); // Ensure you store this on login
+    const currentUserId = localStorage.getItem('userId');
 
     chatMessages.forEach(msg => {
         const messageDiv = document.createElement('div');
-        // Assuming msg.userId is available if needed for your UI
         const isCurrentUser = msg.userId === parseInt(currentUserId, 10);
-
         messageDiv.className = `chat-message ${isCurrentUser ? 'my-message' : 'other-message'}`;
-        messageDiv.innerHTML = `
-            <div class="message-user">${msg.user || 'Unknown'}</div>
-            <div>${msg.message}</div>
-            <div class="message-time">${new Date(msg.createdAt).toLocaleTimeString()}</div>
-        `;
+
+        // User info and text (if any)
+        let html = `<div class="message-user">${msg.user || 'Unknown'}</div>`;
+        if (msg.message) {
+            html += `<div>${msg.message}</div>`;
+        }
+
+        // If there is an attached file, display a link or preview
+        if (msg.fileUrl) {
+            // For images, display a preview:
+            if (/\.(jpg|jpeg|png|gif)$/i.test(msg.fileUrl)) {
+                html += `<div><img src="${msg.fileUrl}" alt="Image" style="max-width:200px;"></div>`;
+            } else {
+                // For other files, provide a download link.
+                html += `<div><a href="${msg.fileUrl}" target="_blank">Download File</a></div>`;
+            }
+        }
+
+        html += `<div class="message-time">${new Date(msg.createdAt).toLocaleTimeString()}</div>`;
+        messageDiv.innerHTML = html;
         messagesContainer.appendChild(messageDiv);
     });
 
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
-// Sends a new message to the group
+// Sends a new message to the group (without optimistic update)
 async function sendChat(event) {
+    event.preventDefault();
+    const chatInput = document.getElementById('chat-input');
+    const fileInput = document.getElementById('file-input');
+    const message = chatInput.value.trim();
+    const file = fileInput.files[0];
+
+    if (!message && !file) {
+        alert("Please type a message or select a file");
+        return;
+    }
+
     try {
-        event.preventDefault();
-        const chatInput = document.getElementById('chat-input');
-        const message = chatInput.value.trim();
-
-        if (!message) throw new Error('Message cannot be empty');
-        if (!selectedGroup) throw new Error('Please select a group');
-
-        const response = await axios.post(`http://localhost:3000/group/${selectedGroup}/message`, { message });
-        const newMessage = response.data;
-
-        chatMessages.push({
-            id: newMessage.id,
-            message: newMessage.message,
-            user: newMessage.user.name,
-            createdAt: newMessage.createdAt
-        });
-        saveMessagesToLocalStorage(chatMessages, selectedGroup);
-        displayChat();
-
-        chatInput.value = '';
+        if (file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('caption', message);
+            await axios.post(`http://localhost:3000/group/${selectedGroup}/upload`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+        } else {
+            await axios.post(`http://localhost:3000/group/${selectedGroup}/message`, { message });
+        }
+        // Do NOT add the message here. Wait for the socket event to update.
     } catch (err) {
-        const errorMsg = err.response?.data?.message || err.message;
-        console.error('Error sending message:', errorMsg);
+        console.error('Error sending message/file:', err);
+        alert('Error sending message/file');
+    } finally {
+        chatInput.value = '';
+        fileInput.value = '';
     }
 }
 
@@ -160,20 +180,6 @@ async function createGroup() {
     }
 }
 
-// Real-time updates for new messages
-socket.on('new-group-message', (newMsg) => {
-    if (newMsg.groupId === selectedGroup) {
-        chatMessages.push({
-            id: newMsg.id,
-            message: newMsg.message,
-            user: newMsg.user,
-            createdAt: newMsg.createdAt
-        });
-
-        saveMessagesToLocalStorage(chatMessages, selectedGroup);
-        displayChat(); // Update the UI
-    }
-});
 
 // Search and add user to group
 async function searchAndAddUser() {
@@ -236,20 +242,57 @@ async function removeUserFromGroup() {
     }
 }
 
-// Real-time updates for new messages
+// Update the socket listener to handle user.name correctly
 socket.on('new-group-message', (newMsg) => {
-    if (newMsg.groupId === selectedGroup) {
+    if (String(newMsg.groupId) === String(selectedGroup)) {
         chatMessages.push({
             id: newMsg.id,
             message: newMsg.message,
-            user: newMsg.user,
-            createdAt: newMsg.createdAt
+            user: newMsg.user?.name || 'Unknown', // Safely access user name
+            createdAt: newMsg.createdAt,
+            fileUrl: newMsg.fileUrl || null
         });
-
         saveMessagesToLocalStorage(chatMessages, selectedGroup);
         displayChat();
     }
 });
+
+
+async function uploadFile() {
+    try {
+        const fileInput = document.getElementById('file-input');
+        const file = fileInput.files[0];
+        if (!file) {
+            alert('Please select a file to upload.');
+            return;
+        }
+        if (!selectedGroup) {
+            alert('Please select a group first.');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+        // Optionally, allow the user to add a caption:
+        // formData.append('caption', 'Optional caption text');
+
+        // Send the file to the server
+        const response = await axios.post(`http://localhost:3000/group/${selectedGroup}/upload`, formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data'
+            }
+        });
+
+        // The new message (with fileUrl) is also broadcast via Socket.IO,
+        // so your socket listener will update the chat.
+        fileInput.value = ''; // clear the input
+    } catch (err) {
+        console.error('Error uploading file:', err.response?.data?.message || err.message);
+        alert('Error uploading file');
+    }
+}
+
+
 
 // Load groups and messages on initial load
 window.onload = async () => {

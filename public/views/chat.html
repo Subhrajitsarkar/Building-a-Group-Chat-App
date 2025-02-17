@@ -21,6 +21,9 @@
     <div class="chat-container" id="messages"></div>
 
     <div class="chat-input">
+        <input type="file" id="file-input" style="display:none;" />
+        <!-- This icon triggers the file selection -->
+        <button type="button" onclick="document.getElementById('file-input').click();">📂</button>
         <input type="text" id="chat-input" placeholder="Type a message...">
         <button onclick="sendChat(event)">Send</button>
     </div>
