@@ -7,6 +7,7 @@ const bcrypt = require('bcrypt');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
+const Sequelize = require('sequelize');
 
 const { authenticate, generateAccessToken } = require('./middleware/auth');
 const User = require('./models/userModel');
@@ -145,15 +146,18 @@ app.post('/group', authenticate, async (req, res) => {
     }
 });
 
+//make a group admin
 app.post('/group/:groupId/makeAdmin', authenticate, async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { userId } = req.body;
+        const userId = Number(req.body.userId);
 
         const group = await Group.findByPk(groupId);
         if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        const isAdmin = await GroupMember.findOne({
+            where: { groupId, userId: req.user.id, isAdmin: true }
+        });
         if (!isAdmin) {
             return res.status(403).json({ message: 'Only group admins can make other members admin' });
         }
@@ -166,15 +170,18 @@ app.post('/group/:groupId/makeAdmin', authenticate, async (req, res) => {
     }
 });
 
+//remove user from a group
 app.post('/group/:groupId/remove', authenticate, async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { userId } = req.body;
+        const userId = Number(req.body.userId);
 
         const group = await Group.findByPk(groupId);
         if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        const isAdmin = await GroupMember.findOne({
+            where: { groupId, userId: req.user.id, isAdmin: true }
+        });
         if (!isAdmin) {
             return res.status(403).json({ message: 'Only group admins can remove members' });
         }
@@ -187,6 +194,7 @@ app.post('/group/:groupId/remove', authenticate, async (req, res) => {
     }
 });
 
+//search user in a group
 app.get('/users/search', authenticate, async (req, res) => {
     try {
         const { query } = req.query;
@@ -213,12 +221,16 @@ app.get('/users/search', authenticate, async (req, res) => {
 app.post('/group/:groupId/add', authenticate, async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { userId } = req.body;
+        // Convert the userId to a number if needed
+        const userId = Number(req.body.userId);
 
         const group = await Group.findByPk(groupId);
         if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        // Ensure the requester is an admin
+        const isAdmin = await GroupMember.findOne({
+            where: { groupId, userId: req.user.id, isAdmin: true }
+        });
         if (!isAdmin) {
             return res.status(403).json({ message: 'Only group admins can add members' });
         }
@@ -271,7 +283,10 @@ app.post('/group/:groupId/message', authenticate, async (req, res) => {
 // Fetch groups for a user
 app.get('/groups', authenticate, async (req, res) => {
     try {
-        const groups = await Group.findAll();
+        // Return groups along with join table attributes (isAdmin)
+        const groups = await req.user.getGroups({
+            joinTableAttributes: ['isAdmin']
+        });
         res.json(groups);
     } catch (err) {
         console.error('Error fetching groups:', err);

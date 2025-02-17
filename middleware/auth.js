@@ -8,19 +8,18 @@ const generateAccessToken = (id, name) => {
 const authenticate = async (req, res, next) => {
     try {
         const token = req.headers.authorization?.split(' ')[1];
+        //const token = req.headers.authorization.split(' ')[1]; // Extracts the token
+
         if (!token) return res.status(401).json({ message: 'Authentication required' });
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        console.log('Decoded Token:', decoded); // Log decoded token for debugging
 
         const user = await User.findByPk(decoded.userId);
         if (!user) return res.status(404).json({ message: 'User not found' });
 
         req.user = user;
-        console.log('Authenticated User:', req.user); // Log user details for debugging
         next();
     } catch (err) {
-        console.error('Authentication Error:', err.message); // Log error details
         res.status(401).json({ message: 'Invalid token' });
     }
 };
