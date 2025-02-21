@@ -18,6 +18,38 @@ exports.createGroup = async (req, res) => {
     }
 };
 
+exports.addUser = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const userId = Number(req.body.userId);
+
+        const group = await Group.findByPk(groupId);
+        if (!group) return res.status(404).json({ message: 'Group not found' });
+
+        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        if (!isAdmin) return res.status(403).json({ message: 'Only admins can add members' });
+
+        // Prevent adding a duplicate member.
+        const existingMember = await GroupMember.findOne({ where: { groupId, userId } });
+        if (existingMember) return res.status(409).json({ message: 'User already in group' });
+
+        await GroupMember.create({ userId, groupId });
+
+        // Notify the added user in real time.
+        const io = req.app.get('io');
+        io.to(`user-${userId}`).emit('added-to-group', {
+            groupId,
+            message: 'You have been added to the group.'
+        });
+        // Notify the group room to update its member list.
+        io.to(String(groupId)).emit('group-members-updated', { groupId, action: 'add', userId });
+        res.json({ message: 'User added to group' });
+    } catch (err) {
+        console.error('Error adding user to group:', err);
+        res.status(500).json({ message: 'Error adding user to group' });
+    }
+};
+
 exports.makeAdmin = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -26,11 +58,20 @@ exports.makeAdmin = async (req, res) => {
         const group = await Group.findByPk(groupId);
         if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        // Check if the requester is an admin
         const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
         if (!isAdmin) return res.status(403).json({ message: 'Only admins can make others admins' });
 
         await GroupMember.update({ isAdmin: true }, { where: { groupId, userId } });
+
+        // Notify the updated user that they are now an admin.
+        const io = req.app.get('io');
+        io.to(`user-${userId}`).emit('updated-group-admin', {
+            groupId,
+            isAdmin: true,
+            message: 'You have been made an admin in the group.'
+        });
+        // Notify the group room to update the member list.
+        io.to(String(groupId)).emit('group-members-updated', { groupId, action: 'makeAdmin', userId });
         res.json({ message: 'User made admin' });
     } catch (err) {
         console.error('Error making user admin:', err);
@@ -46,35 +87,23 @@ exports.removeUser = async (req, res) => {
         const group = await Group.findByPk(groupId);
         if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        // Check if the requester is an admin
         const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
         if (!isAdmin) return res.status(403).json({ message: 'Only admins can remove members' });
 
         await GroupMember.destroy({ where: { groupId, userId } });
+
+        // Notify the removed user immediately.
+        const io = req.app.get('io');
+        io.to(`user-${userId}`).emit('removed-from-group', {
+            groupId,
+            message: 'You have been removed from the group.'
+        });
+        // Notify the group room to update its member list.
+        io.to(String(groupId)).emit('group-members-updated', { groupId, action: 'remove', userId });
         res.json({ message: 'User removed from group' });
     } catch (err) {
         console.error('Error removing user from group:', err);
         res.status(500).json({ message: 'Error removing user from group' });
-    }
-};
-
-exports.addUser = async (req, res) => {
-    try {
-        const { groupId } = req.params;
-        const userId = Number(req.body.userId);
-
-        const group = await Group.findByPk(groupId);
-        if (!group) return res.status(404).json({ message: 'Group not found' });
-
-        // Check if the requester is an admin
-        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
-        if (!isAdmin) return res.status(403).json({ message: 'Only admins can add members' });
-
-        await GroupMember.create({ userId, groupId });
-        res.json({ message: 'User added to group' });
-    } catch (err) {
-        console.error('Error adding user to group:', err);
-        res.status(500).json({ message: 'Error adding user to group' });
     }
 };
 
@@ -85,19 +114,14 @@ exports.postGroupMessage = async (req, res) => {
         if (!message) return res.status(400).json({ message: 'Message is required' });
 
         const newMessage = await GroupChat.create({ message, groupId, userId: req.user.id });
-
         let populatedMessage = await GroupChat.findOne({
             where: { id: newMessage.id },
             include: [{ model: User, attributes: ['name'] }]
         });
-
-        // Convert to plain object so it is easily serializable
         populatedMessage = populatedMessage.get({ plain: true });
 
-        // Emit the message via socket.io
         const io = req.app.get('io');
         io.to(String(groupId)).emit('new-group-message', populatedMessage);
-
         res.status(201).json(populatedMessage);
     } catch (err) {
         console.error('Error sending message:', err);
@@ -126,7 +150,7 @@ exports.uploadFile = async (req, res) => {
         const { groupId } = req.params;
         const newMessage = await GroupChat.create({
             message: req.body.caption || '',
-            fileUrl: req.file.location, // from multer-S3
+            fileUrl: req.file.location,
             groupId,
             userId: req.user.id
         });
@@ -136,10 +160,8 @@ exports.uploadFile = async (req, res) => {
             include: [{ model: User, attributes: ['name'] }]
         });
 
-        // Emit the uploaded file message
         const io = req.app.get('io');
         io.to(String(groupId)).emit('new-group-message', populatedMessage);
-
         res.status(201).json(populatedMessage);
     } catch (err) {
         console.error('Upload error:', err);
@@ -149,7 +171,6 @@ exports.uploadFile = async (req, res) => {
 
 exports.getAllGroups = async (req, res) => {
     try {
-        // Using Sequelize magic method getGroups()
         const groups = await req.user.getGroups({ joinTableAttributes: ['isAdmin'] });
         res.json(groups);
     } catch (err) {
