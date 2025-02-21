@@ -1,6 +1,7 @@
+// models/chatModel.js
 const Sequelize = require('sequelize');
 const sequelize = require('../utils/database');
-const User = require('../models/userModel');
+const User = require('./userModel');
 
 const Chat = sequelize.define('chat', {
     id: {
@@ -16,7 +17,7 @@ const Chat = sequelize.define('chat', {
         type: Sequelize.INTEGER,
         allowNull: false,
         references: {
-            model: User, // Reference User model
+            model: User,
             key: 'id'
         }
     }
@@ -25,7 +26,7 @@ const Chat = sequelize.define('chat', {
     underscored: true
 });
 
-// Define the association
+// Association
 Chat.belongsTo(User, { foreignKey: 'userId' });
 
 module.exports = Chat;

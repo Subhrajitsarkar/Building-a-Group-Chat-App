@@ -1,3 +1,5 @@
+// public/js/signup.js
+
 async function signup(event) {
     try {
         event.preventDefault();

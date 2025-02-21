@@ -1,9 +1,13 @@
+// public/js/chat.js
+
 let chatMessages = [];
 let selectedGroup = null;
 let selectedGroupIsAdmin = false;
 
 // Socket.IO client connection
-const socket = io('http://localhost:3000', { auth: { token: localStorage.getItem('token') } });
+const socket = io('http://localhost:3000', {
+    auth: { token: localStorage.getItem('token') }
+});
 
 // Automatically attach the JWT token to every Axios request header.
 axios.interceptors.request.use(config => {
@@ -14,22 +18,22 @@ axios.interceptors.request.use(config => {
     return config;
 });
 
-// Save messages to local storage
+// Save the last 10 messages to localStorage (per group)
 function saveMessagesToLocalStorage(messages, groupId) {
-    const recentMessages = messages.slice(-10); // Keep last 10 messages
+    const recentMessages = messages.slice(-10);
     localStorage.setItem(`chatMessages_${groupId}`, JSON.stringify(recentMessages));
 }
 
-// Load messages from local storage
+// Load messages from localStorage
 function loadMessagesFromLocalStorage(groupId) {
     const storedMessages = localStorage.getItem(`chatMessages_${groupId}`);
     return storedMessages ? JSON.parse(storedMessages) : [];
 }
 
-// Fetches all groups the user belongs to (with admin info)
+// Fetch all groups the user belongs to
 async function fetchGroups() {
     try {
-        const response = await axios.get('http://localhost:3000/groups');
+        const response = await axios.get('http://localhost:3000/group');
         const groups = response.data;
         const groupSelect = document.getElementById('group-select');
         groupSelect.innerHTML = `<option value="">Select a Group</option>`;
@@ -38,19 +42,21 @@ async function fetchGroups() {
             const option = document.createElement('option');
             option.value = group.id;
             option.textContent = group.name;
-            // Assuming the join table info is returned as group.groupMember
+            // group.groupMember might contain { isAdmin: true/false }
             option.dataset.isAdmin = group.groupMember ? group.groupMember.isAdmin : false;
             groupSelect.appendChild(option);
         });
 
-        // Validate or clear last selected group
+        // Check if we have a previously selected group in localStorage
         const lastSelectedGroup = localStorage.getItem('selectedGroup');
         if (lastSelectedGroup && groups.find(g => g.id == lastSelectedGroup)) {
             groupSelect.value = lastSelectedGroup;
             selectedGroup = parseInt(lastSelectedGroup, 10);
-            // Also set admin status for the selected group
+
+            // Also set admin status
             const selectedOption = document.querySelector(`#group-select option[value="${lastSelectedGroup}"]`);
             selectedGroupIsAdmin = selectedOption ? selectedOption.dataset.isAdmin === 'true' : false;
+
             await fetchGroupMessages();
         } else {
             localStorage.removeItem('selectedGroup');
@@ -70,21 +76,22 @@ async function fetchGroupMessages() {
         selectedGroup = parseInt(groupId, 10);
         localStorage.setItem('selectedGroup', selectedGroup);
 
-        // Update admin status based on the selected option's data attribute
+        // Update admin status from the selected option
         const selectedOption = document.querySelector(`#group-select option[value="${groupId}"]`);
         selectedGroupIsAdmin = selectedOption ? selectedOption.dataset.isAdmin === 'true' : false;
 
-        // Join the group room
+        // Join the group room via socket
         socket.emit('join-group', String(selectedGroup));
 
-        // Fetch messages from the server
+        // Fetch messages from server
         const response = await axios.get(`http://localhost:3000/group/${selectedGroup}/messages`);
         const newMessages = response.data.map(msg => ({
             id: msg.id,
             message: msg.message,
             user: msg.user ? msg.user.name : 'Unknown',
+            userId: msg.userId,           // So we can compare with currentUserId
             createdAt: msg.createdAt,
-            fileUrl: msg.fileUrl // Include fileUrl if it exists
+            fileUrl: msg.fileUrl
         }));
 
         chatMessages = newMessages;
@@ -95,31 +102,34 @@ async function fetchGroupMessages() {
     }
 }
 
-
-// Display chat messages
+// Render chat messages in the UI
 function displayChat() {
     const messagesContainer = document.getElementById('messages');
     messagesContainer.innerHTML = '';
-    const currentUserId = localStorage.getItem('userId');
+
+    const currentUserId = localStorage.getItem('userId')
+        ? parseInt(localStorage.getItem('userId'), 10)
+        : null;
 
     chatMessages.forEach(msg => {
         const messageDiv = document.createElement('div');
-        const isCurrentUser = msg.userId === parseInt(currentUserId, 10);
+
+        // Check if this message belongs to the current user
+        const isCurrentUser = msg.userId === currentUserId;
         messageDiv.className = `chat-message ${isCurrentUser ? 'my-message' : 'other-message'}`;
 
-        // User info and text (if any)
         let html = `<div class="message-user">${msg.user || 'Unknown'}</div>`;
         if (msg.message) {
             html += `<div>${msg.message}</div>`;
         }
 
-        // If there is an attached file, display a link or preview
+        // If there's a file, show it
         if (msg.fileUrl) {
-            // For images, display a preview:
+            // If it's an image
             if (/\.(jpg|jpeg|png|gif)$/i.test(msg.fileUrl)) {
                 html += `<div><img src="${msg.fileUrl}" alt="Image" style="max-width:200px;"></div>`;
             } else {
-                // For other files, provide a download link.
+                // For non-image files, provide a link
                 html += `<div><a href="${msg.fileUrl}" target="_blank">Download File</a></div>`;
             }
         }
@@ -132,13 +142,18 @@ function displayChat() {
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
-// Sends a new message to the group (without optimistic update)
+// Send a new message or file to the group
 async function sendChat(event) {
     event.preventDefault();
     const chatInput = document.getElementById('chat-input');
     const fileInput = document.getElementById('file-input');
     const message = chatInput.value.trim();
     const file = fileInput.files[0];
+
+    if (!selectedGroup) {
+        alert('Please select a group first.');
+        return;
+    }
 
     if (!message && !file) {
         alert("Please type a message or select a file");
@@ -150,13 +165,14 @@ async function sendChat(event) {
             const formData = new FormData();
             formData.append('file', file);
             formData.append('caption', message);
+
             await axios.post(`http://localhost:3000/group/${selectedGroup}/upload`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
         } else {
             await axios.post(`http://localhost:3000/group/${selectedGroup}/message`, { message });
         }
-        // Do NOT add the message here. Wait for the socket event to update.
+        // The new message will arrive via socket.io event below
     } catch (err) {
         console.error('Error sending message/file:', err);
         alert('Error sending message/file');
@@ -180,8 +196,7 @@ async function createGroup() {
     }
 }
 
-
-// Search and add user to group
+// Search for a user and add them to the group
 async function searchAndAddUser() {
     try {
         if (!selectedGroupIsAdmin) {
@@ -191,7 +206,8 @@ async function searchAndAddUser() {
         const searchQuery = prompt('Enter name, email, or phone number:');
         if (!searchQuery) return;
 
-        const response = await axios.get(`http://localhost:3000/users/search?query=${searchQuery}`);
+        // Updated route: /user/search instead of /users/search
+        const response = await axios.get(`http://localhost:3000/user/search?query=${searchQuery}`);
         const users = response.data;
 
         if (users.length === 0) {
@@ -199,8 +215,10 @@ async function searchAndAddUser() {
             return;
         }
 
-        // Now prompt for the user ID to add
-        const userId = prompt('Enter the ID of the user to add:');
+        // Let admin pick which user ID to add
+        const userId = prompt(
+            `Found ${users.length} user(s). Enter the ID of the user to add:`
+        );
         if (!userId) return;
 
         await axios.post(`http://localhost:3000/group/${selectedGroup}/add`, { userId });
@@ -210,7 +228,7 @@ async function searchAndAddUser() {
     }
 }
 
-// Make user admin
+// Make a user admin
 async function makeUserAdmin() {
     try {
         if (!selectedGroupIsAdmin) {
@@ -226,7 +244,7 @@ async function makeUserAdmin() {
     }
 }
 
-// Remove user from group
+// Remove a user from group
 async function removeUserFromGroup() {
     try {
         if (!selectedGroupIsAdmin) {
@@ -242,13 +260,15 @@ async function removeUserFromGroup() {
     }
 }
 
-// Update the socket listener to handle user.name correctly
+// Listen for new group messages from socket.io
 socket.on('new-group-message', (newMsg) => {
+    // Only update if the message belongs to the currently selected group
     if (String(newMsg.groupId) === String(selectedGroup)) {
         chatMessages.push({
             id: newMsg.id,
             message: newMsg.message,
-            user: newMsg.user?.name || 'Unknown', // Safely access user name
+            user: newMsg.user?.name || 'Unknown',
+            userId: newMsg.userId,   // Make sure we have userId in the data
             createdAt: newMsg.createdAt,
             fileUrl: newMsg.fileUrl || null
         });
@@ -257,64 +277,16 @@ socket.on('new-group-message', (newMsg) => {
     }
 });
 
-
-async function uploadFile() {
-    try {
-        const fileInput = document.getElementById('file-input');
-        const file = fileInput.files[0];
-        if (!file) {
-            alert('Please select a file to upload.');
-            return;
-        }
-        if (!selectedGroup) {
-            alert('Please select a group first.');
-            return;
-        }
-
-        const formData = new FormData();
-        formData.append('file', file);
-        // Optionally, allow the user to add a caption:
-        // formData.append('caption', 'Optional caption text');
-
-        // Send the file to the server
-        const response = await axios.post(`http://localhost:3000/group/${selectedGroup}/upload`, formData, {
-            headers: {
-                'Content-Type': 'multipart/form-data'
-            }
-        });
-
-        // The new message (with fileUrl) is also broadcast via Socket.IO,
-        // so your socket listener will update the chat.
-        fileInput.value = ''; // clear the input
-    } catch (err) {
-        console.error('Error uploading file:', err.response?.data?.message || err.message);
-        alert('Error uploading file');
-    }
-}
-
-
-
-// Load groups and messages on initial load
-window.onload = async () => {
-    await fetchGroups();
-
-    // Add event listener for group selection change
-    document.getElementById('group-select').addEventListener('change', async () => {
-        const groupId = document.getElementById('group-select').value;
-        if (groupId) {
-            selectedGroup = parseInt(groupId, 10);
-            // Update admin status from the selected option
-            const selectedOption = document.querySelector(`#group-select option[value="${groupId}"]`);
-            selectedGroupIsAdmin = selectedOption ? selectedOption.dataset.isAdmin === 'true' : false;
-            localStorage.setItem('selectedGroup', selectedGroup);
-            await fetchGroupMessages();
-        }
-    });
-};
-
+// Refresh the chat/groups
 function refreshChat() {
     fetchGroups();
     if (selectedGroup) {
         fetchGroupMessages();
     }
 }
+
+// On window load, fetch groups
+window.onload = async () => {
+    await fetchGroups();
+    // If you want to auto-fetch messages for the last group, it happens in fetchGroups.
+};

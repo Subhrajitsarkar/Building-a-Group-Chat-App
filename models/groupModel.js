@@ -1,3 +1,4 @@
+// models/groupModel.js
 const Sequelize = require('sequelize');
 const sequelize = require('../utils/database');
 
@@ -12,7 +13,7 @@ const Group = sequelize.define('group', {
         allowNull: false
     },
     createdBy: {
-        type: Sequelize.INTEGER, // Reference to the user who created the group
+        type: Sequelize.INTEGER, // userId of the creator
         allowNull: false
     }
 }, {

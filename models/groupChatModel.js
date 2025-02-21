@@ -1,3 +1,4 @@
+// models/groupChatModel.js
 const Sequelize = require('sequelize');
 const sequelize = require('../utils/database');
 const Group = require('./groupModel');

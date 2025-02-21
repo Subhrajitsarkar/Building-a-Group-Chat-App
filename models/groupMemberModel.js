@@ -1,3 +1,4 @@
+// models/groupMemberModel.js
 const Sequelize = require('sequelize');
 const sequelize = require('../utils/database');
 const User = require('./userModel');

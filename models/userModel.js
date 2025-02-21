@@ -1,7 +1,8 @@
-let Sequelize = require('sequelize');
-let sequelize = require('../utils/database')
+// models/userModel.js
+const Sequelize = require('sequelize');
+const sequelize = require('../utils/database');
 
-let User = sequelize.define('user', {
+const User = sequelize.define('user', {
     id: {
         type: Sequelize.INTEGER,
         allowNull: false,
@@ -26,5 +27,6 @@ let User = sequelize.define('user', {
         type: Sequelize.STRING,
         allowNull: false
     }
-})
-module.exports = User
+});
+
+module.exports = User;
