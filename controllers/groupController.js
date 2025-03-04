@@ -10,6 +10,7 @@ exports.createGroup = async (req, res) => {
         if (!name) return res.status(400).json({ message: 'Group name is required' });
 
         const group = await Group.create({ name, createdBy: req.user.id });
+        // Creator is set as admin automatically.
         await GroupMember.create({ userId: req.user.id, groupId: group.id, isAdmin: true });
         res.status(201).json({ message: 'Group created', group });
     } catch (err) {
@@ -21,28 +22,35 @@ exports.createGroup = async (req, res) => {
 exports.addUser = async (req, res) => {
     try {
         const { groupId } = req.params;
-        const userId = Number(req.body.userId);
+        const mobile = req.body.mobile;
+        if (!mobile) return res.status(400).json({ message: 'Mobile number is required' });
+
+        // Look up the user by mobile number.
+        const user = await User.findOne({ where: { number: mobile } });
+        if (!user) return res.status(404).json({ message: 'User not found with given mobile number' });
+        const userId = user.id;
 
         const group = await Group.findByPk(groupId);
         if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
-        if (!isAdmin) return res.status(403).json({ message: 'Only admins can add members' });
+        // Only an admin of the group can add members.
+        const requesterIsAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        if (!requesterIsAdmin) return res.status(403).json({ message: 'Only admins can add members' });
 
-        // Prevent adding a duplicate member.
+        // Prevent duplicate entries.
         const existingMember = await GroupMember.findOne({ where: { groupId, userId } });
         if (existingMember) return res.status(409).json({ message: 'User already in group' });
 
         await GroupMember.create({ userId, groupId });
 
-        // Notify the added user in real time.
+        // Notify the added user and update the group room.
         const io = req.app.get('io');
         io.to(`user-${userId}`).emit('added-to-group', {
             groupId,
             message: 'You have been added to the group.'
         });
-        // Notify the group room to update its member list.
         io.to(String(groupId)).emit('group-members-updated', { groupId, action: 'add', userId });
+
         res.json({ message: 'User added to group' });
     } catch (err) {
         console.error('Error adding user to group:', err);
@@ -53,25 +61,31 @@ exports.addUser = async (req, res) => {
 exports.makeAdmin = async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { userId } = req.body;
+        const mobile = req.body.mobile;
+        if (!mobile) return res.status(400).json({ message: 'Mobile number is required' });
+
+        // Look up the user by mobile number.
+        const user = await User.findOne({ where: { number: mobile } });
+        if (!user) return res.status(404).json({ message: 'User not found with given mobile number' });
+        const userId = user.id;
 
         const group = await Group.findByPk(groupId);
         if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
-        if (!isAdmin) return res.status(403).json({ message: 'Only admins can make others admins' });
+        // Only an admin of the group can make someone an admin.
+        const requesterIsAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        if (!requesterIsAdmin) return res.status(403).json({ message: 'Only admins can make others admins' });
 
         await GroupMember.update({ isAdmin: true }, { where: { groupId, userId } });
 
-        // Notify the updated user that they are now an admin.
         const io = req.app.get('io');
         io.to(`user-${userId}`).emit('updated-group-admin', {
             groupId,
             isAdmin: true,
             message: 'You have been made an admin in the group.'
         });
-        // Notify the group room to update the member list.
         io.to(String(groupId)).emit('group-members-updated', { groupId, action: 'makeAdmin', userId });
+
         res.json({ message: 'User made admin' });
     } catch (err) {
         console.error('Error making user admin:', err);
@@ -82,24 +96,30 @@ exports.makeAdmin = async (req, res) => {
 exports.removeUser = async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { userId } = req.body;
+        const mobile = req.body.mobile;
+        if (!mobile) return res.status(400).json({ message: 'Mobile number is required' });
+
+        // Look up the user by mobile number.
+        const user = await User.findOne({ where: { number: mobile } });
+        if (!user) return res.status(404).json({ message: 'User not found with given mobile number' });
+        const userId = user.id;
 
         const group = await Group.findByPk(groupId);
         if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        const isAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
-        if (!isAdmin) return res.status(403).json({ message: 'Only admins can remove members' });
+        // Only an admin of the group can remove members.
+        const requesterIsAdmin = await GroupMember.findOne({ where: { groupId, userId: req.user.id, isAdmin: true } });
+        if (!requesterIsAdmin) return res.status(403).json({ message: 'Only admins can remove members' });
 
         await GroupMember.destroy({ where: { groupId, userId } });
 
-        // Notify the removed user immediately.
         const io = req.app.get('io');
         io.to(`user-${userId}`).emit('removed-from-group', {
             groupId,
             message: 'You have been removed from the group.'
         });
-        // Notify the group room to update its member list.
         io.to(String(groupId)).emit('group-members-updated', { groupId, action: 'remove', userId });
+
         res.json({ message: 'User removed from group' });
     } catch (err) {
         console.error('Error removing user from group:', err);

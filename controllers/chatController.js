@@ -2,25 +2,21 @@
 const Chat = require('../models/chatModel');
 const GroupChat = require('../models/groupChatModel');
 
-// Example direct chat or leftover group chat logic:
 exports.sendChat = async (req, res) => {
     try {
         const { message, groupId } = req.body;
         if (!message || !groupId) {
             return res.status(400).json({ error: 'Message and groupId are required' });
         }
-
-        // Storing the Message
+        // Store the message in GroupChat.
         const newMessage = await GroupChat.create({
             message,
             groupId,
             userId: req.user.id
         });
-
-        // Emit the message
+        // Emit the new message to all clients in the room named with the groupId.
         const io = req.app.get('io');
-        io.to(`group-${groupId}`).emit('new-group-message', newMessage);
-
+        io.to(String(groupId)).emit('new-group-message', newMessage);
         res.status(201).json(newMessage);
     } catch (err) {
         console.error('Error sending message:', err);
